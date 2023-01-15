@@ -75,7 +75,6 @@ int main() {
     perror("Nadanie wartosci semaforowi 1");
     exit(1);
   }
-
   shmid = shmget(45282, sizeof(struct buf_and_indexes), IPC_CREAT | 0600);
   if (shmid == -1) {
     perror("Utworzenie segmentu pamieci wspoldzielonej");

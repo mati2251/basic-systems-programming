@@ -11,5 +11,6 @@ add_executable(files_revert files/files_revert.cpp)
 add_executable(files_size files/files_size.c)
 
 add_executable(processes processes/semaphores_and_processes.c)
+add_executable(readers-and-writers-problem readers-and-writers-problem/readers-and-writers.c)
 
 add_executable(thread thread/mutex_thread.c)
