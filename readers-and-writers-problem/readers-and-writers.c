@@ -8,7 +8,6 @@
 #include <sys/shm.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <stdio.h>
 
 #define PROCESS_NUMBER 10
 #define LIBRARY_COUNT 10
@@ -16,193 +15,275 @@
 static struct sembuf sem_buf;
 
 struct program_properties {
-  int books_count;
-  int books_in_library_count;
-  int readers[PROCESS_NUMBER];
-  int number_of_readers;
-  int books_in_library_readers_count[LIBRARY_COUNT];
+    int readers_count;
+    int inbox_size[PROCESS_NUMBER];
+    int current_readers[PROCESS_NUMBER];
+    int process_count;
+    int books_count_library;
+    int recived_books;
+    struct { struct book book; int how_many_message; } books_state[LIBRARY_COUNT];
+};
+
+enum process_type {
+    READER, WRITER
 };
 
 struct process_properties {
-  int sem_id;
-  int msg_id;
+    int sem_id;
+    int msg_id;
+    enum process_type type;
+    int process_number;
 };
 
-enum process_type { READER, WRITER };
+struct message {
+    long mtype;
+    struct book mvalue;
+};
 
-enum phase_type { RELAX, LIBRARY_USING };
-
-void down(int sem_id, int sem_num) {
-  sem_buf.sem_num = sem_num;
-  sem_buf.sem_op = -1;
-  sem_buf.sem_flg = 0;
-  if (semop(sem_id, &sem_buf, 1) == -1) {
-    perror("Raising the semaphore");
-    exit(1);
-  }
-}
-
-void up(int sem_id, int sem_num) {
-  sem_buf.sem_num = sem_num;
-  sem_buf.sem_op = 1;
-  sem_buf.sem_flg = 0;
-  if (semop(sem_id, &sem_buf, 1) == -1) {
-    perror("Lowering the semaphore");
-    exit(1);
-  }
-}
-
-void reader_operation(struct program_properties *program_p,
-                      struct process_properties process_p) {
-  up(process_p.sem_id, 0);
-  down(process_p.sem_id, 1);
-  struct book book;
-  if (msgrcv(process_p.msg_id, &book, sizeof(book), getpid(), 0) == -1) {
-    perror("Odebranie elementu");
-    exit(1);
-  }
-  program_p->books_in_library_readers_count[book.index]--;
-  if (program_p->books_in_library_readers_count[book.index] == 0) {
-    program_p->books_in_library_count--;
-  }
-  down(process_p.sem_id, 0);
-  if (program_p->books_in_library_count == 0) {
-    up(process_p.sem_id, 1);
-  }
-}
-
-void writer_operation(struct program_properties *program_p,
-                      struct process_properties process_p) {
-  printf("Process %d is writer now\n", getpid());
-  fflush(stdout);
-  down(process_p.sem_id, 0);
-  down(process_p.sem_id, 3);
-  up(process_p.sem_id, 2);
-  program_p->books_in_library_readers_count[program_p->books_in_library_count] =
-      program_p->number_of_readers;
-  struct book book = books[program_p->books_count];
-  book.index = program_p->books_in_library_count;
-  for (int i = 0; i < program_p->number_of_readers; i++) {
-    book.mtype = program_p->readers[i];
-    if (msgsnd(process_p.msg_id, &book, sizeof(book), 0) == -1) {
-      perror("Wyslanie pustego komunikatu");
-      exit(1);
+void sem_op(int sem_id, int sem_num, short value) {
+    sem_buf.sem_num = sem_num;
+    sem_buf.sem_op = value;
+    sem_buf.sem_flg = 0;
+    if (semop(sem_id, &sem_buf, 1) == -1) {
+        perror("Raising the semaphore");
+        exit(1);
     }
-  }
-  program_p->books_count++;
-  program_p->books_in_library_count++;
-  up(process_p.sem_id, 0);
-  up(process_p.sem_id, 2);
-  up(process_p.sem_id, 3);
-  if (program_p->books_in_library_count == LIBRARY_COUNT) {
-    down(process_p.sem_id, 2);
-  }
 }
 
-void add_reader(struct program_properties *program_p,
-                struct process_properties process_p) {
-  printf("Process %d is writer now\n", getpid());
-  fflush(stdout);
-  down(process_p.sem_id, 3);
-  program_p->readers[program_p->number_of_readers] = getpid();
-  program_p->number_of_readers++;
-  up(process_p.sem_id, 3);
-}
-
-void remove_reader(struct program_properties *program_p,
-                   struct process_properties process_p) {
-  down(process_p.sem_id, 3);
-  for (int i = 0; i < program_p->number_of_readers; i++) {
-    if (program_p->readers[i] == getpid()) {
-      program_p->readers[i] = program_p->readers[program_p->number_of_readers];
-      program_p->number_of_readers--;
-      break;
+void sem_set_value(int sem_id, int sem_num, int value) {
+    if (semctl(sem_id, sem_num, SETVAL, value) == -1) {
+        perror("Setting the semaphore value");
+        exit(1);
     }
-  }
-  up(process_p.sem_id, 3);
 }
 
-void process(struct program_properties *program_p,
-             struct process_properties process_p) {
-  enum process_type type = rand() % 2;
-  enum phase_type phase = rand() % 2;
-  if (type == READER) {
-    add_reader(program_p, process_p);
-  }
-  while (program_p->books_count < 30) {
-    enum process_type old_type = type;
-    if (phase == RELAX) {
-      type = rand() % 2;
-      phase = LIBRARY_USING;
-    } else {
-      if (type == READER) {
-        if (old_type == WRITER) {
-          add_reader(program_p, process_p);
+void add_send_book_to_state(struct book book, struct program_properties *program_properties) {
+    for (int i = 0; i < LIBRARY_COUNT; i++) {
+        if (program_properties->books_state[i].book.title == book.title && program_properties->books_state[i].book.author == book.author) {
+            program_properties->books_state[i].how_many_message++;
+            return;
         }
-        reader_operation(program_p, process_p);
-      } else {
-        if (old_type == READER) {
-          remove_reader(program_p, process_p);
-        }
-        writer_operation(program_p, process_p);
-      }
-      phase = RELAX;
     }
-  }
+    program_properties->books_state[program_properties->books_count_library].book = book;
+    program_properties->books_state[program_properties->books_count_library].how_many_message = 1;
+    program_properties->books_count_library++;
 }
 
-void initialize_semaphore_value(int sum_id, int sum_num) {
-  if (semctl(sum_id, sum_num, SETVAL, (int)0) == -1) {
-    perror("Nadanie wartosci semaforowi");
-    exit(1);
-  }
+void remove_book_from_libary(struct book book, struct program_properties *program_properties) {
+    for (int i = 0; i < LIBRARY_COUNT; i++) {
+        if (program_properties->books_state[i].book.title == book.title && program_properties->books_state[i].book.author == book.author) {
+            for (int j = i; j < LIBRARY_COUNT - 1; j++) {
+                program_properties->books_state[j] = program_properties->books_state[j + 1];
+            }
+            program_properties->books_count_library--;
+            program_properties->recived_books++;
+            break;
+        }
+    }
+}
+
+void sub_send_book_from_state(struct book book, struct program_properties *program_properties) {
+    for (int i = 0; i < LIBRARY_COUNT; i++) {
+        if (program_properties->books_state[i].book.title == book.title && program_properties->books_state[i].book.author == book.author) {
+            program_properties->books_state[i].how_many_message--;
+            if(program_properties->books_state[i].how_many_message == 0) {
+                remove_book_from_libary(book, program_properties);
+            }
+            return;
+        }
+    }
+}
+
+
+
+void snd_msg(struct process_properties *process_p, struct message msg,  struct program_properties *program_p) {
+    if (msgsnd(process_p->msg_id, &msg, sizeof(msg.mvalue), 0) == -1) {
+        printf("%s %s %d %ld \n", msg.mvalue.title, msg.mvalue.author, msg.mvalue.year, msg.mtype);
+        exit(1);
+    }
+    add_send_book_to_state(msg.mvalue, program_p);
+    printf("Process %d send book %s %s to %ld\n", process_p->process_number, msg.mvalue.title, msg.mvalue.author, msg.mtype);
+}
+
+struct book rcv_msg(struct process_properties *process_p, struct program_properties *program_p) {
+    struct message msg;
+    if (msgrcv(process_p->msg_id, &msg, sizeof(msg.mvalue), process_p->process_number + 1, 0) == -1) {
+        perror("Receive message");
+        exit(1);
+    }
+    sub_send_book_from_state(msg.mvalue, program_p);
+    printf("Process %d received book %s %s\n", process_p->process_number, msg.mvalue.title, msg.mvalue.author);
+    return msg.mvalue;
+}
+
+void add_reader(struct program_properties *program_p, struct process_properties process_p) {
+    sem_op(process_p.sem_id, 0, -1);
+    program_p->current_readers[program_p->readers_count] = process_p.process_number;
+    program_p->readers_count++;
+    sem_op(process_p.sem_id, 0, 1);
+}
+
+void remove_reader(struct program_properties *program_p, struct process_properties process_p) {
+    sem_op(process_p.sem_id, 0, -1);
+    for (int i = 0; i < program_p->readers_count; i++) {
+        if (program_p->current_readers[i] == process_p.process_number) {
+            for (int j = i; j < program_p->readers_count - 1; j++) {
+                program_p->current_readers[j] = program_p->current_readers[j + 1];
+            }
+            program_p->readers_count--;
+            break;
+        }
+    }
+    sem_op(process_p.sem_id, 0, 1);
+}
+
+void reader_operation(struct program_properties *program_p, struct process_properties process_p) {
+    sem_op(process_p.sem_id, 1, -1);
+    sem_op(process_p.sem_id, 0, -1);
+    printf("Process %d is reader now\n", process_p.process_number);
+    if (program_p->inbox_size[process_p.process_number] > 0) {
+        rcv_msg(&process_p, program_p);
+        program_p->inbox_size[process_p.process_number]--;
+    }
+    sem_op(process_p.sem_id, 0, 1);
+    sem_op(process_p.sem_id, 1, 1);
+}
+
+void writer_operation(struct program_properties *program_p, struct process_properties process_p) {
+    sem_op(process_p.sem_id, 1, -PROCESS_NUMBER);
+    sem_op(process_p.sem_id, 0, -1);
+    printf("Books in Library: %d\n", program_p->books_count_library);
+    if (program_p->readers_count != 0 && program_p->books_count_library < LIBRARY_COUNT) {
+        printf("Process %d is writer now \n", process_p.process_number);
+        struct book book = books[rand() % NUMBER_OF_BOOKS];
+        for (int i = 0; i < program_p->readers_count; i++) {
+            struct message msg = {program_p->current_readers[i] + 1, book};
+            snd_msg(&process_p, msg, program_p);
+            program_p->inbox_size[program_p->current_readers[i]]++;
+        }
+    }
+    sem_op(process_p.sem_id, 0, 1);
+    sem_op(process_p.sem_id, 1, PROCESS_NUMBER);
+}
+
+void process(struct program_properties *program_p, struct process_properties process_p) {
+    enum process_type old_type = WRITER;
+    sem_op(process_p.sem_id, 0, -1);
+    process_p.process_number = program_p->process_count;
+    program_p->process_count++;
+    sem_op(process_p.sem_id, 0, 1);
+    printf("Process number %d started work \n", process_p.process_number);
+    while (program_p->recived_books < NUMBER_OF_BOOKS) {
+        if (process_p.type == READER) {
+            if (old_type == WRITER) {
+                add_reader(program_p, process_p);
+            }
+            reader_operation(program_p, process_p);
+        } else {
+            if (old_type == READER) {
+                remove_reader(program_p, process_p);
+            }
+            writer_operation(program_p, process_p);
+        }
+        old_type = process_p.type;
+        process_p.type = rand() % 2;
+    }
+    printf("exit %d\n", process_p.process_number);
+    exit(0);
+}
+
+int create_semaphores() {
+    int number_of_semaphores = 4;
+    int sem_id = semget(45888, number_of_semaphores, IPC_CREAT | 0600);
+    if (sem_id == -1) {
+        perror("Create semaphore arrays");
+        exit(1);
+    }
+
+    return sem_id;
+}
+
+void initial_value_semaphores(int sem_id) {
+    sem_set_value(sem_id, 0, 1);
+    sem_set_value(sem_id, 1, PROCESS_NUMBER);
+    sem_set_value(sem_id, 2, 1);
+    sem_set_value(sem_id, 3, 1);
+}
+
+void removed_message(int msg_id) {
+    msgctl(msg_id, IPC_RMID, NULL);
+}
+
+int create_shared_memory() {
+    int shm_id = shmget(45888, sizeof(struct program_properties), IPC_CREAT | 0600);
+    if (shm_id == -1) {
+        perror("Create shared memory");
+        exit(1);
+    }
+    removed_message(shm_id);
+    return shm_id;
+}
+
+struct program_properties *get_shared_memory(int shm_id) {
+    struct program_properties *properties;
+    properties = (struct program_properties *) shmat(shm_id, NULL, 0);
+    properties->readers_count = 0;
+    properties->process_count = 0;
+    properties->recived_books = 0;
+    properties->books_count_library = 0;
+    for(int i=0;i<LIBRARY_COUNT; i++){
+        properties->inbox_size[i] = 0;
+    }
+    for (int i = 0; i < PROCESS_NUMBER; i++) {
+        properties->inbox_size[i] = 0;
+    }
+    return properties;
+}
+
+int create_communication_queue() {
+    int msg_id = msgget(45888, IPC_CREAT | IPC_EXCL | 0600);
+    if (msg_id == -1) {
+        msg_id = msgget(45888, IPC_CREAT | 0600);
+        if (msg_id == -1) {
+            perror("Create a message queue");
+            exit(1);
+        }
+    }
+    return msg_id;
+}
+
+void create_processes(struct program_properties *program_p, struct process_properties *process_p) {
+    for (int i = 0; i < PROCESS_NUMBER; i++) {
+        pid_t pid = fork();
+        if (pid == -1) {
+            perror("Create a process");
+            exit(1);
+        } else if (pid == 0) {
+            process_p->type = i % 2;
+            process(program_p, *process_p);
+        }
+    }
+}
+
+void wait_for_processes() {
+    for (int i = 0; i < PROCESS_NUMBER; i++) {
+        wait(NULL);
+    }
 }
 
 int main() {
-  printf("Program started\n");
-  int shm_id, sem_id, msg_id;
-  struct program_properties *properties;
-  int number_of_semaphores = 4;
-  // Semaphores: 0 - library block, 1 - reader block, 2 - writer block, 3 -
-  // current reader block
-  sem_id = semget(45282, number_of_semaphores, IPC_CREAT | 0600);
-  if (sem_id == -1) {
-    perror("Create semaphore arrays");
-    exit(1);
-  }
-  for (int i = 0; i < number_of_semaphores; i++) {
-    initialize_semaphore_value(sem_id, i);
-  }
-  shm_id = shmget(45282, sizeof(struct program_properties), IPC_CREAT | 0600);
-  if (shm_id == -1) {
-    perror("Create a segment shared memory");
-    exit(1);
-  }
-  properties = (struct program_properties *)shmat(shm_id, NULL, 0);
-  properties->books_count = 0;
-  properties->books_in_library_count = 0;
-  properties->number_of_readers = 0;
-  if (properties == NULL) {
-    perror("Connecting a shared memory segment");
-    exit(1);
-  }
-  msg_id = msgget(45283, IPC_EXCL | 0600);
-  if (msg_id == -1) {
-    msg_id = msgget(45283, IPC_CREAT | 0600);
-    if (msg_id == -1) {
-      perror("Create a message queue");
-      exit(1);
-    }
-  }
-  for (int i = 0; i < PROCESS_NUMBER; i++) {
-    pid_t pid = fork();
-    if (pid == 0) {
-      process(properties, (struct process_properties){sem_id, msg_id});
-      exit(0);
-    }
-  }
-  for (int i = 0; i < PROCESS_NUMBER; i++) {
-    wait(NULL);
-  }
-  return 0;
+    printf("Program started\n");
+    int shm_id = create_shared_memory();
+    int msg_id = create_communication_queue();
+    int sem_id = create_semaphores();
+    initial_value_semaphores(sem_id);
+    struct program_properties *program_p = get_shared_memory(shm_id);
+    struct process_properties *process_p;
+    process_p->sem_id = sem_id;
+    process_p->msg_id = msg_id;
+    process_p->type = WRITER;
+    create_processes(program_p, process_p);
+    wait_for_processes();
+    removed_message(process_p->msg_id);
+    return 0;
 }
