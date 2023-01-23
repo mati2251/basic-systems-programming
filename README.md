@@ -11,3 +11,5 @@ POSIX Thread, create thread, scope of different kind variables and mutex lock
 Catch and handling signals
 ## Readers and writers
 Using ipc features to solve readers and writers problem
+## Roller Coaster
+Using POSIX Thread to solve roller coaster problem (description tasks in README.md inside roller-coaster)
