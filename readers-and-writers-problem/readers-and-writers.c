@@ -8,6 +8,7 @@
 #include <sys/shm.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <time.h>
 
 #define PROCESS_NUMBER 10
 #define LIBRARY_COUNT 10
@@ -152,9 +153,6 @@ void writer_operation(struct program_properties *program_p, struct process_prope
     printf("Books in Library: %d\n", program_p->books_count_library);
     if (program_p->readers_count != 0 && program_p->books_count_library < LIBRARY_COUNT) {
         printf("Process %d is writer now \n", process_p.process_number);
-        int semaphore_value = semctl(process_p.sem_id, 0, GETVAL);
-        int semaphore_value_ = semctl(process_p.sem_id, 1, GETVAL);
-        printf("Semaphore value: %d %d\n", semaphore_value, semaphore_value_);
         struct book book = books[program_p->sended_books];
         program_p->sended_books++;
         for (int i = 0; i < program_p->readers_count; i++) {
@@ -168,6 +166,7 @@ void writer_operation(struct program_properties *program_p, struct process_prope
 }
 
 void process(struct program_properties *program_p, struct process_properties process_p) {
+    srand(time(NULL) + process_p.process_number + getpid());
     enum process_type old_type = WRITER;
     sem_op(process_p.sem_id, 0, -1);
     process_p.process_number = program_p->process_count;
@@ -189,13 +188,16 @@ void process(struct program_properties *program_p, struct process_properties pro
         old_type = process_p.type;
         process_p.type = rand() % 2;
     }
+    while(program_p->books_count_library != 0){
+        reader_operation(program_p, process_p);
+    }
     printf("exit %d\n", process_p.process_number);
     exit(0);
 }
 
 int create_semaphores() {
     int number_of_semaphores = 2;
-    int sem_id = semget(46892, number_of_semaphores, IPC_CREAT | 0600);
+    int sem_id = semget(47867, number_of_semaphores, IPC_CREAT | 0600);
     if (sem_id == -1) {
         perror("Create semaphore arrays");
         exit(1);
@@ -214,7 +216,7 @@ void removed_message(int msg_id) {
 }
 
 int create_shared_memory() {
-    int shm_id = shmget(46892, sizeof(struct program_properties), IPC_CREAT | 0600);
+    int shm_id = shmget(47867, sizeof(struct program_properties), IPC_CREAT | 0600);
     if (shm_id == -1) {
         perror("Create shared memory");
         exit(1);
@@ -234,11 +236,11 @@ struct program_properties *get_shared_memory(int shm_id) {
 }
 
 int create_communication_queue() {
-    int msg_id = msgget(46892, IPC_CREAT | IPC_EXCL | 0600);
+    int msg_id = msgget(47867, IPC_CREAT | IPC_EXCL | 0600);
     removed_message(msg_id);
-    msg_id = msgget(46892, IPC_CREAT | IPC_EXCL | 0600);
+    msg_id = msgget(47867, IPC_CREAT | IPC_EXCL | 0600);
     if (msg_id == -1) {
-        msg_id = msgget(46892, IPC_CREAT | 0600);
+        msg_id = msgget(47867, IPC_CREAT | 0600);
         if (msg_id == -1) {
             perror("Create a message queue");
             exit(1);

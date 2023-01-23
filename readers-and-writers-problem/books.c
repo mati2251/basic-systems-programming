@@ -7,7 +7,7 @@ struct book {
 
 #define NUMBER_OF_BOOKS 30
 
-struct book books[NUMBER_OF_BOOKS] = {
+struct book books[NUMBER_OF_BOOKS + 1] = {
         {0,  "The Lord of the Rings",                     "J.R.R. Tolkien", 1954},
         {1,  "The Hobbit",                                "J.R.R. Tolkien", 1937},
         {2,  "The Silmarillion",                          "J.R.R. Tolkien", 1977},
@@ -37,4 +37,6 @@ struct book books[NUMBER_OF_BOOKS] = {
         {26, "The Menexenus",                             "Plato",          360},
         {27, "The Statesman",                             "Plato",          360},
         {28, "The Laws",                                  "Plato",          360},
-        {29, "The Symposium",                             "Plato",          360}};
+        {29, "The Symposium",                             "Plato",          360},
+        {30, "The Republic",                              "Plato",          360}
+};
