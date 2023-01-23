@@ -17,3 +17,5 @@ add_executable(signal signal/signal.c)
 add_executable(catch-signal signal/catch-signal.c)
 
 add_executable(thread thread/mutex_thread.c)
+
+add_executable(roller-coaster roller-coaster/roller-coaster.c)
