@@ -23,6 +23,7 @@ void *passenger() {
         printf("Trolley start\n");
         sleep(2);
         current_trolley = 0;
+        printf("Trolley already to start\n");
         pthread_cond_signal(&cnd_trolley);
     }
     pthread_mutex_unlock(&trolley_mutex);
